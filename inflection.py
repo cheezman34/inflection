@@ -38,6 +38,7 @@ PLURALS = [
     (r"(?i)s$", 's'),
     (r"$", 's'),
 ]
+_PRECOMPIELD_PLURALS = []
 
 SINGULARS = [
     (r"(?i)(database)s$", r'\1'),
@@ -73,6 +74,7 @@ SINGULARS = [
     (r"(?i)(ss)$", r'\1'),
     (r"(?i)s$", ''),
 ]
+_PRECOMPILED_SINGULARS = []
 
 UNCOUNTABLES = set([
     'equipment',
@@ -85,6 +87,7 @@ UNCOUNTABLES = set([
     'sheep',
     'species',
 ])
+_PRECOMPILED_UNCOUNTABLES = []
 
 
 def _irregular(singular, plural):
@@ -113,27 +116,15 @@ def _irregular(singular, plural):
         ))
     else:
         PLURALS.insert(0, (
-            r"%s%s$" % (singular[0].upper(), caseinsensitive(singular[1:])),
-            plural[0].upper() + plural[1:]
-        ))
-        PLURALS.insert(0, (
-            r"%s%s$" % (singular[0].lower(), caseinsensitive(singular[1:])),
+            r"%s$" % (caseinsensitive(singular)),
             plural[0].lower() + plural[1:]
         ))
         PLURALS.insert(0, (
-            r"%s%s$" % (plural[0].upper(), caseinsensitive(plural[1:])),
-            plural[0].upper() + plural[1:]
-        ))
-        PLURALS.insert(0, (
-            r"%s%s$" % (plural[0].lower(), caseinsensitive(plural[1:])),
+            r"%s$" % (caseinsensitive(plural)),
             plural[0].lower() + plural[1:]
         ))
         SINGULARS.insert(0, (
-            r"%s%s$" % (plural[0].upper(), caseinsensitive(plural[1:])),
-            singular[0].upper() + singular[1:]
-        ))
-        SINGULARS.insert(0, (
-            r"%s%s$" % (plural[0].lower(), caseinsensitive(plural[1:])),
+            r"%s$" % (caseinsensitive(plural)),
             singular[0].lower() + singular[1:]
         ))
 
@@ -297,10 +288,18 @@ def pluralize(word):
     if not word or word.lower() in UNCOUNTABLES:
         return word
     else:
-        for rule, replacement in PLURALS:
-            if re.search(rule, word):
-                return re.sub(rule, replacement, word)
-        return word
+
+        global PLURALS_COMPILED
+        global FULL_PLURAL
+        global PLURAL_MAP
+        global _PRECOMPIELD_PLURALS
+        
+        if _PRECOMPIELD_PLURALS != PLURALS:
+
+            PLURALS_COMPILED, FULL_PLURAL, PLURAL_MAP = precompile(PLURALS)
+            _PRECOMPIELD_PLURALS = list(PLURALS)
+        
+        return optimized_replace(FULL_PLURAL, PLURAL_MAP, PLURALS_COMPILED, word)
 
 
 def singularize(word):
@@ -321,14 +320,25 @@ def singularize(word):
         "CamelOctopus"
 
     """
-    for inflection in UNCOUNTABLES:
-        if re.search(r'(?i)\b(%s)\Z' % inflection, word):
-            return word
-
-    for rule, replacement in SINGULARS:
-        if re.search(rule, word):
-            return re.sub(rule, replacement, word)
-    return word
+    global FULL_UNCOUNTABLES
+    global _PRECOMPILED_UNCOUNTABLES
+    global SINGULARS_COMPILED
+    global FULL_SINGULAR
+    global SINGULAR_MAP
+    global _PRECOMPILED_SINGULARS
+    
+    if UNCOUNTABLES != _PRECOMPILED_UNCOUNTABLES:
+        FULL_UNCOUNTABLES = re.compile(r'(?i)\b(%s)\Z' % '|'.join(UNCOUNTABLES))
+        _PRECOMPILED_UNCOUNTABLES = frozenset(UNCOUNTABLES)
+    
+    if FULL_UNCOUNTABLES.search(word):
+        return word
+    
+    if _PRECOMPILED_SINGULARS != SINGULARS:
+        SINGULARS_COMPILED, FULL_SINGULAR, SINGULAR_MAP = precompile(SINGULARS)
+        _PRECOMPILED_SINGULARS = list(SINGULARS)
+    
+    return optimized_replace(FULL_SINGULAR, SINGULAR_MAP, SINGULARS_COMPILED, word)
 
 
 def tableize(word):
@@ -412,7 +422,6 @@ def underscore(word):
     word = word.replace("-", "_")
     return word.lower()
 
-
 _irregular('person', 'people')
 _irregular('man', 'men')
 _irregular('human', 'humans')
@@ -421,3 +430,36 @@ _irregular('sex', 'sexes')
 _irregular('move', 'moves')
 _irregular('cow', 'kine')
 _irregular('zombie', 'zombies')
+
+def precompile(rules):
+    all_compiled = []
+    sub_patterns = []
+    total = 0
+    index_map = {}
+    
+    for i, (pattern, repl) in enumerate(rules):
+        compiled = re.compile(pattern)
+        sub_patterns.append('(%s)' % pattern)
+        all_compiled.append((compiled, repl))
+        index_map[total] = i
+        total += compiled.groups + 1
+    
+    return all_compiled, re.compile('|'.join(sub_patterns)), index_map
+
+def optimized_replace(full_r, index_map, rules, text):
+    match_obj = full_r.search(text)
+    if match_obj:
+        for i, val in enumerate(match_obj.groups()):
+            if val is not None:
+                i = index_map[i]
+                r, repl = rules[i]
+                fixed = r.sub(repl, text)
+                if text[:1].isupper():
+                    first = fixed[:1]
+                    if not first.isupper():
+                        fixed = first.upper() + fixed[1:]
+                return fixed
+    return text
+
+
+
